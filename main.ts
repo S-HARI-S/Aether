@@ -1,234 +1,216 @@
-import {
-	App,
-	Plugin,
-	TFile,
-	Notice,
-	PluginSettingTab,
-	Setting,
-} from "obsidian";
-import * as path from "path";
-import * as fs from "fs";
-import { lock, unlock } from 'proper-lockfile';
+import { App, ItemView, WorkspaceLeaf, Plugin, TFile, MarkdownRenderer } from 'obsidian';
+import { request } from 'obsidian';
 
-interface RagChatPluginSettings {
-	chatFolderName: string;
+const VIEW_TYPE_CHAT = 'chat-view';
+
+interface ChatMessage {
+    text: string;
+    isUser: boolean;
+    sources?: string[];
 }
 
-const DEFAULT_SETTINGS: RagChatPluginSettings = {
-	chatFolderName: "RAG Chats",
-};
-
-export default class RagChatPlugin extends Plugin {
-	settings: RagChatPluginSettings;
-
-	async onload() {
-		await this.loadSettings();
-
-		this.addCommand({
-			id: "open-rag-chat",
-			name: "Open RAG Chat",
-			callback: () => this.openRagChat(),
-		});
-
-		this.registerMarkdownPostProcessor((el, ctx) => {
-			const formEl = el.querySelector("#chat-form");
-			if (formEl) {
-				formEl.addEventListener("submit", (e) => {
-					e.preventDefault();
-					const input = formEl.querySelector("input") as HTMLInputElement;
-					console.log(input.value);
-					if (input) {
-						this.handleQuestionSubmit(input.value, ctx.sourcePath);
-						input.value = ""; // Clear input after submission
-					}
-				});
-			}
-		});
-
-		this.addSettingTab(new RagChatSettingTab(this.app, this));
-	}
-
-	async loadSettings() {
-		this.settings = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
-			await this.loadData()
-		);
-	}
-
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-
-	async openRagChat() {
-		const vault = this.app.vault;
-		const chatFolder = vault.getAbstractFileByPath(this.settings.chatFolderName);
-
-		if (!chatFolder) {
-			await vault.createFolder(this.settings.chatFolderName);
-		}
-
-		const newChatFile = `${this.settings.chatFolderName}/${Date.now()}.md`;
-		const file = await vault.create(newChatFile, this.getInitialContent());
-
-		this.app.workspace.getLeaf().openFile(file);
-	}
-
-	getInitialContent(): string {
-		return `
-<div id="chat-log" style="margin-bottom: 10px;"></div>
-
-<form id="chat-form">
-  <div style="display: flex; flex-direction: row; align-items: center;">
-    <input type="text" placeholder="Ask a question" style="flex: 1;">
-    <button type="submit" style="margin-left:10px;">Submit</button>
-  </div>
-</form>
-
----
-`;
-	}
-
-	async handleQuestionSubmit(question: string, filePath: string) {
-		const jsonPath = path.join(
-			(this.app.vault.adapter as any).basePath,
-			".obsidian/plugins/obsidian-sample-plugin/rag_question.json"
-		);
-
-		try {
-			// Check if file exists; create it if it doesn't
-			if (!fs.existsSync(jsonPath)) {
-				const questionData = { question: question }; // Initialize with the question
-				fs.writeFileSync(jsonPath, JSON.stringify(questionData, null, 2));
-				console.log("Question JSON file created successfully.");
-			}
-
-			// Lock the file
-			await lock(jsonPath);
-
-			// Read and update the question in the file
-			let existingData = { question: "" }; // Default structure
-
-			try {
-				const fileContent = fs.readFileSync(jsonPath, "utf8");
-				if (fileContent) {
-					existingData = JSON.parse(fileContent);
-				}
-			} catch (parseError) {
-				console.error("Error parsing JSON, initializing with default:", parseError);
-			}
-
-			// Update the question
-			existingData.question = question;
-			fs.writeFileSync(jsonPath, JSON.stringify(existingData, null, 2));
-
-			// Call to render results after submitting question
-			const file = this.app.vault.getAbstractFileByPath(filePath) as TFile;
-			await this.renderResultsWhenAvailable(file, question);
-			
-		} catch (error) {
-			console.error("Error handling question:", error);
-			new Notice("Failed to process the question. Please try again.");
-		} finally {
-			// Unlock the file
-			await unlock(jsonPath);
-		}
-	}
-
-	async renderResultsWhenAvailable(file: TFile, question: string) {
-		const resultsPath = path.join(
-			(this.app.vault.adapter as any).basePath,
-			".obsidian/plugins/obsidian-sample-plugin/rag_results.json"
-		);
-		const maxRetries = 30; // Maximum number of retries
-		const retryInterval = 2000; // 2 seconds between retries
-	
-		const checkResults = async (retryCount: number) => {
-			if (retryCount >= maxRetries) {
-				console.error("Max retries reached. No results available.");
-				new Notice("Failed to get results. Please try again.");
-				return;
-			}
-	
-			if (fs.existsSync(resultsPath)) {
-				try {
-					await lock(resultsPath);
-	
-					const resultsData = JSON.parse(fs.readFileSync(resultsPath, "utf8"));
-	
-					const answer = resultsData.answer || "No answer provided";
-					const sources = resultsData.sources || [];
-	
-					const sourcesText = sources.length > 0
-						? sources.map((item: string) => {
-							const sourceName = path.basename(item, path.extname(item));
-							return `- [[${sourceName}]]`;
-						}).join("\n")
-						: "- No sources found.";
-	
-					const answerContent = `## ${question}\n\n${answer}\n\n### Sources:\n${sourcesText}\n\n---\n\n`;
-	
-					const currentContent = await this.app.vault.read(file);
-					const [header, ...rest] = currentContent.split('---');
-					const newContent = `${header.trim()}\n\n---\n\n${answerContent}${rest.join('---').trim()}`;
-	
-					await this.app.vault.modify(file, newContent);
-	
-					const updatedContent = await this.app.vault.read(file);
-					if (updatedContent.includes(answerContent)) {
-						console.log("Content updated successfully.");
-						new Notice("Response rendered successfully.");
-					} else {
-						console.error("Failed to verify content update.");
-						new Notice("Failed to render the response. Retrying...");
-						setTimeout(() => checkResults(retryCount + 1), retryInterval);
-					}
-				} catch (error) {
-					console.error("Error processing results:", error);
-				} finally {
-					await unlock(resultsPath);
-					fs.unlink(resultsPath, (err) => {
-						if (err) {
-							console.error("Error deleting file:", err);
-						} else {
-							console.log("Results file deleted successfully");
-						}
-					});
-				}
-			} else {
-				console.log(`Retrying to fetch results (${retryCount + 1}/${maxRetries})...`);
-				setTimeout(() => checkResults(retryCount + 1), retryInterval);
-			}
-		};
-	
-		checkResults(0);
-	}
+interface ApiResponse {
+    answer: string;
+    query: string;
+    sources: string[];
 }
 
-class RagChatSettingTab extends PluginSettingTab {
-	plugin: RagChatPlugin;
+export default class ChatPlugin extends Plugin {
+    async onload() {
+        this.registerView(VIEW_TYPE_CHAT, (leaf) => new ChatView(leaf, this.app));
 
-	constructor(app: App, plugin: RagChatPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
+        this.addRibbonIcon('message-square', 'Open Chat Panel', async () => {
+            const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_CHAT);
+            if (leaves.length === 0) {
+                await this.app.workspace.getRightLeaf(false).setViewState({
+                    type: VIEW_TYPE_CHAT,
+                });
+            }
+            this.app.workspace.revealLeaf(
+                this.app.workspace.getLeavesOfType(VIEW_TYPE_CHAT)[0]
+            );
+        });
 
-	display(): void {
-		let { containerEl } = this;
-		containerEl.empty();
-		containerEl.createEl("h2", { text: "RAG Chat Settings" });
+        // Load the CSS
+        this.loadStyles();
+    }
 
-		new Setting(containerEl)
-			.setName("Chat Folder Name")
-			.setDesc("The folder where chat files will be stored")
-			.addText((text) =>
-				text
-					.setPlaceholder("Enter folder name")
-					.setValue(this.plugin.settings.chatFolderName)
-					.onChange(async (value: string) => {
-						this.plugin.settings.chatFolderName = value;
-						await this.plugin.saveSettings();
-					})
-			);
-	}
+    onunload() {
+        this.app.workspace.detachLeavesOfType(VIEW_TYPE_CHAT);
+    }
+
+    loadStyles() {
+        const styleEl = document.createElement('link');
+        styleEl.rel = 'stylesheet';
+        styleEl.href = 'styles.css';
+        document.head.appendChild(styleEl);
+    }
+}
+
+class ChatView extends ItemView {
+    messages: ChatMessage[] = [];
+    chatContainer: HTMLElement;
+    inputContainer: HTMLElement;
+    chatInput: HTMLTextAreaElement;
+    sendButton: HTMLButtonElement;
+    exportButton: HTMLButtonElement;
+    app: App;
+
+    constructor(leaf: WorkspaceLeaf, app: App) {
+        super(leaf);
+        this.app = app;
+    }
+
+    getViewType() {
+        return VIEW_TYPE_CHAT;
+    }
+
+    getDisplayText() {
+        return 'Chat Interface';
+    }
+
+    async onOpen() {
+        const container = this.containerEl.children[1];
+        container.empty();
+        container.addClass('chat-view-container');
+
+        this.chatContainer = container.createEl('div', { cls: 'chat-messages' });
+        this.inputContainer = container.createEl('div', { cls: 'chat-input-container' });
+
+        this.chatInput = this.inputContainer.createEl('textarea', {
+            cls: 'chat-input',
+            attr: { placeholder: 'Type your message...' }
+        });
+
+        this.sendButton = this.inputContainer.createEl('button', { text: 'Send', cls: 'chat-send-button' });
+        this.exportButton = this.inputContainer.createEl('button', { text: 'Export', cls: 'chat-export-button' });
+
+        this.sendButton.onclick = () => this.sendMessage(this.chatInput.value);
+        this.exportButton.onclick = () => this.exportChat();
+        this.chatInput.onkeydown = (event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                this.sendMessage(this.chatInput.value);
+            }
+        };
+    }
+
+    async sendMessage(text: string) {
+        if (text.trim() === '') return;
+        
+        this.addMessage({ text, isUser: true });
+        this.chatInput.value = '';
+        
+        // Disable input and buttons
+        this.setInputState(false);
+        
+        try {
+            const response = await this.makeApiRequest(text);
+            this.addMessage({ text: response.answer, isUser: false, sources: response.sources });
+        } catch (error) {
+            console.error('Error making API request:', error);
+            this.addMessage({ text: "Sorry, there was an error processing your request.", isUser: false });
+        } finally {
+            // Re-enable input and buttons
+            this.setInputState(true);
+        }
+    }
+
+    setInputState(enabled: boolean) {
+        this.chatInput.disabled = !enabled;
+        this.sendButton.disabled = !enabled;
+        this.exportButton.disabled = !enabled;
+    }
+
+    async makeApiRequest(query: string): Promise<ApiResponse> {
+        const response = await request({
+            url: 'http://localhost:5000/arraysum',
+            method: 'POST',
+            body: JSON.stringify({ query }),
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        return JSON.parse(response);
+    }
+
+    addMessage(message: ChatMessage) {
+        this.messages.push(message);
+        this.renderMessage(message);
+        this.chatContainer.scrollTop = this.chatContainer.scrollHeight;
+    }
+
+    async renderMessage(message: ChatMessage) {
+        const messageEl = this.chatContainer.createEl('div', {
+            cls: `chat-message ${message.isUser ? 'user-message' : 'bot-message'}`
+        });
+
+        if (message.isUser) {
+            messageEl.createEl('p', { text: message.text });
+        } else {
+            const contentEl = messageEl.createEl('div');
+            await MarkdownRenderer.renderMarkdown(message.text, contentEl, '', this);
+        }
+
+        if (message.sources && message.sources.length > 0) {
+            const sourcesEl = messageEl.createEl('div', { cls: 'message-sources' });
+            sourcesEl.createEl('p', { text: 'Sources:', cls: 'sources-header' });
+            const sourcesList = sourcesEl.createEl('ul');
+            message.sources.forEach(source => {
+                const listItem = sourcesList.createEl('li');
+                const link = this.formatSourceAsLink(source);
+                listItem.createEl('span', {
+                    text: link,
+                    cls: 'internal-link'
+                });
+            });
+        }
+    }
+
+    formatSourceAsLink(source: string): string {
+        const linkText = source.replace(/\.[^/.]+$/, "");
+        const normalizedPath = linkText.replace(/\\/g, '/');
+        const fileName = normalizedPath.substring(normalizedPath.lastIndexOf('/') + 1);
+        return `[[${normalizedPath} | ${fileName}]]`;
+    }
+
+    async exportChat() {
+        if (this.messages.length === 0) return;
+
+        const chatContent = this.messages.map((m, index) => {
+            let content = '';
+            if (m.isUser) {
+                content += `## ${m.text}\n`;
+            } else {
+                content += `${m.text}\n\n`;
+                if (m.sources && m.sources.length > 0) {
+                    content += 'Sources:\n' + m.sources.map(s => `- ${this.formatSourceAsLink(s)}`).join('\n') + '\n\n';
+                    content+="\n\n---\n"
+                }
+            }
+
+            if (index < this.messages.length - 1) {
+                content += '\n';
+            }
+            return content;
+        }).join('');
+
+        const fileName = `chat-export-${new Date().toISOString().replace(/:/g, '-')}.md`;
+        const folderPath = 'chats';
+
+        try {
+            const folder = this.app.vault.getAbstractFileByPath(folderPath);
+            if (!folder) {
+                await this.app.vault.createFolder(folderPath);
+            }
+
+            await this.app.vault.create(`${folderPath}/${fileName}`, chatContent);
+            console.log('Chat exported successfully');
+        } catch (error) {
+            console.error('Error exporting chat:', error);
+        }
+    }
+
+    async onClose() {
+        // Any cleanup code can go here
+    }
 }

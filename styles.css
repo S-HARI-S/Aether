@@ -1,8 +1,107 @@
-/*
+/* Chat container styles */
+.chat-view-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background-color: var(--background-primary);
+    color: var(--text-normal);
+}
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.chat-messages {
+    flex-grow: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
 
-If your plugin does not need CSS, delete this file.
+.chat-input-container {
+    display: flex;
+    border-top: 1px solid var(--background-modifier-border);
+    padding: 10px;
+}
 
-*/
+.chat-input {
+    flex-grow: 1;
+    resize: none;
+    height: 30px;
+    border-radius: 5px 0 0 5px;
+    background-color: var(--background-secondary);
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border);
+    padding: 5px 10px;
+}
+
+.chat-send-button, .chat-export-button {
+    height: 30px;
+    background-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border: none;
+    cursor: pointer;
+    padding: 0 15px;
+}
+
+.chat-send-button {
+    border-radius: 0 5px 5px 0;
+}
+
+.chat-export-button {
+    margin-left: 10px;
+    border-radius: 5px;
+}
+
+/* Message styles */
+.chat-message {
+    margin: 5px 0;
+    max-width: fit-content;
+    word-break: break-word;
+
+
+}
+
+.user-message {
+    align-self: flex-end;
+    background-color: #8051ff;
+    color: white;
+    /* padding: 10px 15px; */
+    border-radius: 5px;
+    padding-left: 10px;
+    padding-right: 10px;
+}
+
+.bot-message {
+    align-self: flex-start;
+    background-color: #2a2b2e;
+    color: #e3e3e3;
+    padding: -10px 10px;
+    border-radius: 5px;
+    padding-left: 10px;
+    padding-right: 10px;
+    padding-bottom: 10px;
+
+}
+
+.message-sources {
+    font-size: 0.8em;
+    margin-top: 5px;
+    color: #a0a0a0;
+}
+
+.sources-header {
+    font-weight: bold;
+    margin-bottom: 3px;
+}
+
+.message-sources ul {
+    margin: 0;
+    padding-left: 0;
+    list-style-type: none;
+}
+
+.internal-link {
+    color: #9e8aff;
+    text-decoration: none;
+}
+
+.internal-link:hover {
+    text-decoration: underline;
+}

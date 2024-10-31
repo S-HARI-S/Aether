@@ -52,7 +52,7 @@ A simple Retrieval-Augmented Generation (RAG) plugin for Obsidian that allows yo
 
 7. Enable the plugin in Obsidian:
    - Go to Settings → Community Plugins
-   - Enable the plugin
+   - Enable the plugin named "sample pluggin"
 
 ## Quick glance at Technical Details
 - **Database**: Uses ChromaDB for vector storage (in-memory mode)
@@ -72,3 +72,4 @@ A simple Retrieval-Augmented Generation (RAG) plugin for Obsidian that allows yo
 - **API Endpoint**: 
   - POST `/arraysum` for querying the knowledge base ( "arraysum" doesn't make sense, i will change this eventually )
   - Maintains conversation history (last 5 exchanges)
+

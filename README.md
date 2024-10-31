@@ -41,7 +41,7 @@ A simple Retrieval-Augmented Generation (RAG) plugin for Obsidian that allows yo
 
 5. Start the Python backend server:
    ```bash
-   python app.py
+   python new.py
    ```
 
 6. Install Node.js dependencies and start the frontend:
